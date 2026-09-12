@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'dev-latest'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE
+        run: |
+          pyinstaller --onefile --name GCalCtrlCli --console gcal_ctrl/cli.py
+
+      - name: Archive
+        run: |
+          Compress-Archive -Path dist\GCalCtrlCli.exe -DestinationPath GCalCtrlCli-Windows.zip
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-latest
+          files: GCalCtrlCli-Windows.zip
+          prerelease: true
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
