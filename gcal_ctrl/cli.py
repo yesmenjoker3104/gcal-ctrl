@@ -102,7 +102,15 @@ def cmd_agenda(args) -> None:
             }
             raw = _run_gws(["calendar", "events", "list", "--params", json.dumps(params)])
         else:
-            raw = _run_gws(["calendar", "+agenda"])
+            today = datetime.now().astimezone().date()
+            params = {
+                "calendarId": "primary",
+                "timeMin": datetime(today.year, today.month, today.day, tzinfo=tz).isoformat(),
+                "singleEvents": True,
+                "orderBy": "startTime",
+                "maxResults": 250,
+            }
+            raw = _run_gws(["calendar", "events", "list", "--params", json.dumps(params)])
 
         payload = json.loads(raw) if raw else {}
         items = payload.get("items", []) if isinstance(payload, dict) else []

@@ -8,18 +8,22 @@ $Root = $PSScriptRoot
 # venv の作成とパッケージインストール
 $Venv = Join-Path $Root ".venv"
 if (-not (Test-Path $Venv)) {
-    python -m venv $Venv
+    py -3.13 -m venv $Venv
 }
 & "$Venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
 & "$Venv\Scripts\python.exe" -m pip install --quiet pyinstaller
 
 # ビルド
-& "$Venv\Scripts\python.exe" -m PyInstaller `
-    --onefile `
-    --name GCalCtrlCli `
-    --console `
-    --distpath (Join-Path $Root "dist") `
-    (Join-Path $Root "gcal_ctrl\cli.py")
+$DistPath = "$Root\dist"
+$WorkPath = "$Root\build"
+$EntryPy = "$Root\gcal_ctrl\cli.py"
+
+Push-Location $Root
+try {
+    & "$Venv\Scripts\pyinstaller.exe" --onefile --name GCalCtrlCli --console --distpath "dist" --workpath "build" --specpath "." -y "gcal_ctrl\cli.py"
+} finally {
+    Pop-Location
+}
 
 $Exe = Join-Path $Root "dist\GCalCtrlCli.exe"
 if (Test-Path $Exe) {
