@@ -145,6 +145,9 @@ def _create_single(event: dict) -> None:
         }
     if description:
         gws_event["description"] = description
+    rrule = event.get("rrule")
+    if rrule:
+        gws_event["recurrence"] = [f"RRULE:{rrule}"]
 
     _run_gws([
         "calendar", "events", "insert",
@@ -166,6 +169,7 @@ def cmd_create(args) -> None:
                 "end": args.end or "",
                 "description": args.description or "",
                 "all_day": args.all_day,
+                "rrule": args.rrule or None,
             }]
         created = 0
         for event in events:
@@ -186,6 +190,104 @@ def cmd_delete(args) -> None:
             "--params", json.dumps({"calendarId": "primary", "eventId": args.event_id}),
         ])
         _ok()
+    except RuntimeError as exc:
+        msg = str(exc)
+        _err(msg, auth_required=_is_auth_error(msg))
+    except Exception as exc:
+        _err(str(exc))
+
+
+def cmd_update(args) -> None:
+    try:
+        patch: dict = {}
+        if args.title is not None:
+            patch["summary"] = args.title
+        if args.start is not None:
+            patch["start"] = {"dateTime": args.start, "timeZone": "Asia/Tokyo"}
+        if args.end is not None:
+            patch["end"] = {"dateTime": args.end, "timeZone": "Asia/Tokyo"}
+        if args.description is not None:
+            patch["description"] = args.description
+        if not patch:
+            _err("変更する内容が指定されていません。")
+            return
+        _run_gws([
+            "calendar", "events", "patch",
+            "--params", json.dumps({"calendarId": "primary", "eventId": args.event_id}),
+            "--json", json.dumps(patch, ensure_ascii=False),
+        ])
+        _ok()
+    except RuntimeError as exc:
+        msg = str(exc)
+        _err(msg, auth_required=_is_auth_error(msg))
+    except Exception as exc:
+        _err(str(exc))
+
+
+def cmd_free_busy(args) -> None:
+    try:
+        tz = datetime.now().astimezone().tzinfo
+        start_day = datetime.fromisoformat(args.start_date).date()
+        end_day = (
+            datetime.fromisoformat(args.end_date).date()
+            if args.end_date
+            else start_day + timedelta(days=1)
+        )
+        time_min = datetime(start_day.year, start_day.month, start_day.day, tzinfo=tz).isoformat()
+        time_max = datetime(end_day.year, end_day.month, end_day.day, tzinfo=tz).isoformat()
+        raw = _run_gws([
+            "calendar", "freebusy",
+            "--json", json.dumps(
+                {"timeMin": time_min, "timeMax": time_max, "items": [{"id": "primary"}]},
+                ensure_ascii=False,
+            ),
+        ])
+        payload = json.loads(raw) if raw else {}
+        calendars = payload.get("calendars", {})
+        primary = calendars.get("primary", {})
+        busy_periods = primary.get("busy", [])
+
+        busy_list = []
+        for period in busy_periods:
+            s = datetime.fromisoformat(period["start"])
+            e = datetime.fromisoformat(period["end"])
+            busy_list.append({
+                "date": s.strftime("%Y-%m-%d"),
+                "start": s.strftime("%H:%M"),
+                "end": e.strftime("%H:%M"),
+            })
+
+        # Compute free slots (09:00-20:00 range) per day
+        free_slots: list[dict] = []
+        current_day = start_day
+        while current_day < end_day:
+            day_str = current_day.strftime("%Y-%m-%d")
+            day_busy = sorted(
+                [b for b in busy_list if b["date"] == day_str],
+                key=lambda x: x["start"],
+            )
+            cursor = datetime(current_day.year, current_day.month, current_day.day, 9, 0)
+            day_end = datetime(current_day.year, current_day.month, current_day.day, 20, 0)
+            for b in day_busy:
+                b_start = datetime.strptime(f"{day_str} {b['start']}", "%Y-%m-%d %H:%M")
+                b_end = datetime.strptime(f"{day_str} {b['end']}", "%Y-%m-%d %H:%M")
+                if cursor < b_start:
+                    free_slots.append({
+                        "date": day_str,
+                        "start": cursor.strftime("%H:%M"),
+                        "end": b_start.strftime("%H:%M"),
+                    })
+                if b_end > cursor:
+                    cursor = b_end
+            if cursor < day_end:
+                free_slots.append({
+                    "date": day_str,
+                    "start": cursor.strftime("%H:%M"),
+                    "end": day_end.strftime("%H:%M"),
+                })
+            current_day += timedelta(days=1)
+
+        _ok(busy=busy_list, free_slots=free_slots, summary=f"空き時間 {len(free_slots)} 件")
     except RuntimeError as exc:
         msg = str(exc)
         _err(msg, auth_required=_is_auth_error(msg))
@@ -230,7 +332,21 @@ def main() -> None:
     p_create.add_argument("--description", default="")
     p_create.add_argument("--all-day", dest="all_day", action="store_true")
     p_create.add_argument("--events-json", dest="events_json", help="JSON array of event objects")
+    p_create.add_argument("--rrule", help="繰り返しルール (例: FREQ=WEEKLY;BYDAY=MO)")
     p_create.set_defaults(func=cmd_create)
+
+    p_update = sub.add_parser("update", help="予定の更新")
+    p_update.add_argument("--event-id", dest="event_id", required=True)
+    p_update.add_argument("--title")
+    p_update.add_argument("--start")
+    p_update.add_argument("--end")
+    p_update.add_argument("--description")
+    p_update.set_defaults(func=cmd_update)
+
+    p_fb = sub.add_parser("free-busy", help="空き時間の確認")
+    p_fb.add_argument("--start-date", dest="start_date", required=True)
+    p_fb.add_argument("--end-date", dest="end_date")
+    p_fb.set_defaults(func=cmd_free_busy)
 
     p_delete = sub.add_parser("delete", help="予定の削除")
     p_delete.add_argument("--event-id", dest="event_id", required=True)
