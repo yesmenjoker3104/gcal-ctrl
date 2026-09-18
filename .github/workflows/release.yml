@@ -7,6 +7,10 @@ on:
       - 'dev-latest'
   workflow_dispatch:
 
+concurrency:
+  group: gcal-ctrl-release
+  cancel-in-progress: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -31,11 +35,16 @@ jobs:
           Compress-Archive -Path dist\GCalCtrlCli.exe -DestinationPath GCalCtrlCli-Windows.zip
 
       - name: Upload Release Asset
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: dev-latest
-          files: GCalCtrlCli-Windows.zip
-          prerelease: true
-          overwrite_files: true
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view dev-latest --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload dev-latest GCalCtrlCli-Windows.zip --repo "${{ github.repository }}" --clobber
+          } else {
+            gh release create dev-latest GCalCtrlCli-Windows.zip `
+              --repo "${{ github.repository }}" `
+              --title "Dev Build (Latest)" `
+              --prerelease
+          }
