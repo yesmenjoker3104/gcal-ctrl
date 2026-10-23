@@ -30,21 +30,43 @@ jobs:
         run: |
           pyinstaller --onefile --name GCalCtrlCli --console gcal_ctrl/cli.py
 
-      - name: Archive
+      - name: Check manifest version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
         run: |
-          Compress-Archive -Path dist\GCalCtrlCli.exe -DestinationPath GCalCtrlCli-Windows.zip
+          $manifest = Get-Content plugin.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $expected = "v$($manifest.version)"
+          if ($env:GITHUB_REF_NAME -ne $expected) {
+            throw "Tag $env:GITHUB_REF_NAME does not match plugin.json version $($manifest.version)"
+          }
+
+      - name: Archive plugin
+        run: |
+          Compress-Archive -Path dist\GCalCtrlCli.exe, plugin.json -DestinationPath GCalCtrl.zip
 
       - name: Upload Release Asset
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view dev-latest --repo "${{ github.repository }}" *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload dev-latest GCalCtrlCli-Windows.zip --repo "${{ github.repository }}" --clobber
+          if ($env:GITHUB_REF_NAME -like 'v*') {
+            $tag = $env:GITHUB_REF_NAME
+            gh release view $tag --repo "${{ github.repository }}" *> $null
+            if ($LASTEXITCODE -eq 0) {
+              gh release upload $tag GCalCtrl.zip --repo "${{ github.repository }}" --clobber
+            } else {
+              gh release create $tag GCalCtrl.zip `
+                --repo "${{ github.repository }}" `
+                --title $tag
+            }
           } else {
-            gh release create dev-latest GCalCtrlCli-Windows.zip `
-              --repo "${{ github.repository }}" `
-              --title "Dev Build (Latest)" `
-              --prerelease
+            gh release view dev-latest --repo "${{ github.repository }}" *> $null
+            if ($LASTEXITCODE -eq 0) {
+              gh release upload dev-latest GCalCtrl.zip --repo "${{ github.repository }}" --clobber
+            } else {
+              gh release create dev-latest GCalCtrl.zip `
+                --repo "${{ github.repository }}" `
+                --title "Dev Build (Latest)" `
+                --prerelease
+            }
           }

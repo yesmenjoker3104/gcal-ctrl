@@ -23,12 +23,15 @@ def _find_gws() -> str:
     found = shutil.which(command)
     if found:
         return found
-    # WinGet default installation path for gws
-    candidate = os.path.expandvars(
-        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.19.0-win-x64\gws.cmd"
-    )
-    if os.path.exists(candidate):
-        return candidate
+    candidates = [
+        os.path.expandvars(r"%APPDATA%\npm\gws.cmd"),
+        os.path.expandvars(
+            r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.19.0-win-x64\gws.cmd"
+        ),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
     raise FileNotFoundError(
         "gws コマンドが見つかりません。settings.json の gws_command を設定するか、PATH に追加してください。"
     )
@@ -244,7 +247,7 @@ def cmd_free_busy(args) -> None:
         time_min = datetime(start_day.year, start_day.month, start_day.day, tzinfo=tz).isoformat()
         time_max = datetime(end_day.year, end_day.month, end_day.day, tzinfo=tz).isoformat()
         raw = _run_gws([
-            "calendar", "freebusy",
+            "calendar", "freebusy", "query",
             "--json", json.dumps(
                 {"timeMin": time_min, "timeMax": time_max, "items": [{"id": "primary"}]},
                 ensure_ascii=False,
@@ -312,7 +315,7 @@ def cmd_auth(_args) -> None:
         bat.write(
             f"@echo off\n"
             f"set PATH={gcloud_bin};%PATH%\n"
-            f'"{exe}" auth setup --login\n'
+            f'"{exe}" auth login --scopes https://www.googleapis.com/auth/calendar\n'
             f"pause\n"
         )
         bat.close()
