@@ -1,10 +1,18 @@
 {
   "name": "GCalCtrl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Google Calendarの読み取り・予定管理",
   "executable": "GCalCtrlCli.exe",
   "env_vars": {
     "GWS_COMMAND": "gws_command"
+  },
+  "login": {
+    "subcommands": ["auth"],
+    "label": "Google認証を開く"
+  },
+  "watch": {
+    "subcommands": ["remind"],
+    "interval_minutes": 5
   },
   "actions": [
     {
@@ -28,8 +36,9 @@
         ]
       },
       "handler": "plugin",
-      "display": "events_table",
-      "display_field": "items"
+      "display": "table",
+      "display_field": "rows",
+      "display_columns": ["日付", "時間", "予定", "場所", "ID"]
     },
     {
       "action": "create",
@@ -42,10 +51,21 @@
         "description": "",
         "all_day": false
       },
-      "prompt_notes": "複数作成はeventsに配列で指定: {\"action\":\"create\",\"events\":[{...},{...}]}。終日予定はall_day:true。",
-      "command": { "subcommands": [], "args": [] },
-      "handler": "builtin:confirm_create",
-      "display": "text"
+      "prompt_notes": "複数作成はeventsに配列で指定: {\"action\":\"create\",\"events\":[{...},{...}]}。終日予定はall_day:true。作成前にユーザーへ確認ダイアログが出る。",
+      "command": {
+        "subcommands": ["create"],
+        "args": [
+          { "type": "flag",      "flag": "--title",       "param": "title",       "omit_if_null": true },
+          { "type": "flag",      "flag": "--start",       "param": "start",       "omit_if_null": true },
+          { "type": "flag",      "flag": "--end",         "param": "end",         "omit_if_null": true },
+          { "type": "flag",      "flag": "--description", "param": "description", "omit_if_null": true },
+          { "type": "bool_flag", "flag": "--all-day",     "param": "all_day" },
+          { "type": "flag",      "flag": "--events-json", "param": "events",      "omit_if_null": true }
+        ]
+      },
+      "handler": "plugin",
+      "display": "text",
+      "display_template": "{message}"
     },
     {
       "action": "delete",
@@ -54,10 +74,16 @@
         "action": "delete",
         "event_id": "イベントID"
       },
-      "prompt_notes": "event_idはagendaで取得したイベントのID（予定リストに表示される）。",
-      "command": { "subcommands": [], "args": [] },
-      "handler": "builtin:confirm_delete",
-      "display": "text"
+      "prompt_notes": "event_idはagendaで取得した予定の表のID列の値。削除前にユーザーへ確認ダイアログが出る。",
+      "command": {
+        "subcommands": ["delete"],
+        "args": [
+          { "type": "flag", "flag": "--event-id", "param": "event_id", "omit_if_null": true }
+        ]
+      },
+      "handler": "plugin",
+      "display": "text",
+      "display_template": "{message}"
     },
     {
       "action": "update",
@@ -70,10 +96,20 @@
         "end": null,
         "description": null
       },
-      "prompt_notes": "変更したいフィールドだけ指定。event_idはagendaで取得したID（予定リストに表示される）。",
-      "command": { "subcommands": [], "args": [] },
-      "handler": "builtin:confirm_update",
-      "display": "text"
+      "prompt_notes": "変更したいフィールドだけ指定。event_idはagendaで取得した予定の表のID列の値。変更前にユーザーへ確認ダイアログが出る。",
+      "command": {
+        "subcommands": ["update"],
+        "args": [
+          { "type": "flag", "flag": "--event-id",    "param": "event_id",    "omit_if_null": true },
+          { "type": "flag", "flag": "--title",       "param": "title",       "omit_if_null": true },
+          { "type": "flag", "flag": "--start",       "param": "start",       "omit_if_null": true },
+          { "type": "flag", "flag": "--end",         "param": "end",         "omit_if_null": true },
+          { "type": "flag", "flag": "--description", "param": "description", "omit_if_null": true }
+        ]
+      },
+      "handler": "plugin",
+      "display": "text",
+      "display_template": "{message}"
     },
     {
       "action": "free_time",

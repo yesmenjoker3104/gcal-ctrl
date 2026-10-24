@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 
 _AUTH_KEYWORDS = (
@@ -65,6 +65,70 @@ def _err(message: str, auth_required: bool = False) -> None:
     print(json.dumps({"ok": False, "error": message, "auth_required": auth_required}, ensure_ascii=True))
 
 
+def _confirm(title: str, message: str) -> bool:
+    """Ask the host to show a yes/no dialog. Returns False if the host gives no 'yes'."""
+    print(json.dumps({"type": "confirm", "id": "confirm", "title": title, "message": message}, ensure_ascii=True), flush=True)
+    line = sys.stdin.readline()
+    if not line:
+        return False
+    try:
+        reply = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return reply.get("type") == "confirm_response" and reply.get("confirmed") is True
+
+
+_WEEKDAYS = "月火水木金土日"
+
+
+def _agenda_rows(items: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for item in items:
+        start_info = item.get("start") or {}
+        end_info = item.get("end") or {}
+        if "dateTime" in start_info:
+            start_dt = datetime.fromisoformat(start_info["dateTime"]).astimezone()
+            time_label = start_dt.strftime("%H:%M")
+            if "dateTime" in end_info:
+                end_dt = datetime.fromisoformat(end_info["dateTime"]).astimezone()
+                time_label += " 〜 " + end_dt.strftime("%H:%M")
+            day = start_dt.date()
+        elif "date" in start_info:
+            day = date.fromisoformat(start_info["date"])
+            time_label = "終日"
+        else:
+            continue
+        rows.append({
+            "日付": f"{day.month}/{day.day}（{_WEEKDAYS[day.weekday()]}）",
+            "時間": time_label,
+            "予定": item.get("summary") or "（タイトルなし）",
+            "場所": item.get("location") or "",
+            "ID": item.get("id", ""),
+        })
+    return rows
+
+
+def _event_label(event_id: str) -> str:
+    try:
+        raw = _run_gws(["calendar", "events", "get", "--params", json.dumps({"calendarId": "primary", "eventId": event_id})])
+        payload = json.loads(raw) if raw else {}
+        return payload.get("summary") or "（タイトルなし）"
+    except Exception:
+        return f"ID: {event_id}"
+
+
+def _describe_event(event: dict) -> str:
+    title = str(event.get("title") or "").strip() or "（タイトルなし）"
+    start = str(event.get("start") or "")
+    end = str(event.get("end") or "")
+    if event.get("all_day"):
+        when = f"{start[:10]} 終日"
+    else:
+        when = f"{start.replace('T', ' ')[:16]} 〜 {end.replace('T', ' ')[:16]}"
+    suffix = "（繰り返し）" if event.get("rrule") else ""
+    return f"・{title}：{when}{suffix}"
+
+
 def cmd_agenda(args) -> None:
     try:
         tz = datetime.now().astimezone().tzinfo
@@ -117,7 +181,8 @@ def cmd_agenda(args) -> None:
 
         payload = json.loads(raw) if raw else {}
         items = payload.get("items", []) if isinstance(payload, dict) else []
-        _ok(items=items, count=len(items))
+        rows = _agenda_rows(items)
+        _ok(rows=rows, count=len(rows))
     except RuntimeError as exc:
         msg = str(exc)
         _err(msg, auth_required=_is_auth_error(msg))
@@ -182,11 +247,16 @@ def cmd_create(args) -> None:
                 "all_day": args.all_day,
                 "rrule": args.rrule or None,
             }]
+        if not events or not all(isinstance(e, dict) for e in events):
+            raise RuntimeError("予定の指定が正しくありません。")
+        if not _confirm("予定の作成", "以下の予定を作成しますか？\n" + "\n".join(_describe_event(e) for e in events)):
+            _ok(message="予定の作成をキャンセルしました。")
+            return
         created = 0
         for event in events:
             _create_single(event)
             created += 1
-        _ok(created=created)
+        _ok(message=f"{created} 件の予定を作成しました。")
     except RuntimeError as exc:
         msg = str(exc)
         _err(msg, auth_required=_is_auth_error(msg))
@@ -196,11 +266,17 @@ def cmd_create(args) -> None:
 
 def cmd_delete(args) -> None:
     try:
+        if not args.event_id:
+            raise RuntimeError("削除する予定のIDが指定されていません。")
+        label = _event_label(args.event_id)
+        if not _confirm("予定の削除", f"「{label}」を削除しますか？"):
+            _ok(message="予定の削除をキャンセルしました。")
+            return
         _run_gws([
             "calendar", "events", "delete",
             "--params", json.dumps({"calendarId": "primary", "eventId": args.event_id}),
         ])
-        _ok()
+        _ok(message="予定を削除しました。")
     except RuntimeError as exc:
         msg = str(exc)
         _err(msg, auth_required=_is_auth_error(msg))
@@ -222,12 +298,27 @@ def cmd_update(args) -> None:
         if not patch:
             _err("変更する内容が指定されていません。")
             return
+        if not args.event_id:
+            raise RuntimeError("変更する予定のIDが指定されていません。")
+        label = _event_label(args.event_id)
+        changes = []
+        if args.title is not None:
+            changes.append(f"・タイトル：{args.title}")
+        if args.start is not None:
+            changes.append(f"・開始：{args.start}")
+        if args.end is not None:
+            changes.append(f"・終了：{args.end}")
+        if args.description is not None:
+            changes.append(f"・説明：{args.description}")
+        if not _confirm("予定の変更", f"「{label}」を次の内容に変更しますか？\n" + "\n".join(changes)):
+            _ok(message="予定の変更をキャンセルしました。")
+            return
         _run_gws([
             "calendar", "events", "patch",
             "--params", json.dumps({"calendarId": "primary", "eventId": args.event_id}),
             "--json", json.dumps(patch, ensure_ascii=False),
         ])
-        _ok()
+        _ok(message="予定を変更しました。")
     except RuntimeError as exc:
         msg = str(exc)
         _err(msg, auth_required=_is_auth_error(msg))
@@ -306,6 +397,40 @@ def cmd_free_busy(args) -> None:
         _err(str(exc))
 
 
+def cmd_remind(_args) -> None:
+    try:
+        now = datetime.now().astimezone()
+        window_end = now + timedelta(minutes=15)
+        params = {
+            "calendarId": "primary",
+            "timeMin": now.isoformat(),
+            "timeMax": window_end.isoformat(),
+            "singleEvents": True,
+            "orderBy": "startTime",
+        }
+        raw = _run_gws(["calendar", "events", "list", "--params", json.dumps(params)])
+        payload = json.loads(raw) if raw else {}
+        notices: list[dict] = []
+        for item in payload.get("items", []) if isinstance(payload, dict) else []:
+            start_raw = (item.get("start") or {}).get("dateTime")
+            if not start_raw:
+                continue
+            start_dt = datetime.fromisoformat(start_raw).astimezone()
+            if not (now <= start_dt <= window_end):
+                continue
+            title = item.get("summary") or "（タイトルなし）"
+            notices.append({
+                "key": f"{item.get('id', '')}:{start_raw}",
+                "text": f"まもなく予定: {title}（{start_dt.strftime('%H:%M')}〜）",
+            })
+        _ok(notices=notices)
+    except RuntimeError as exc:
+        msg = str(exc)
+        _err(msg, auth_required=_is_auth_error(msg))
+    except Exception as exc:
+        _err(str(exc))
+
+
 def cmd_auth(_args) -> None:
     try:
         exe = _find_gws()
@@ -347,7 +472,7 @@ def main() -> None:
     p_create.set_defaults(func=cmd_create)
 
     p_update = sub.add_parser("update", help="予定の更新")
-    p_update.add_argument("--event-id", dest="event_id", required=True)
+    p_update.add_argument("--event-id", dest="event_id")
     p_update.add_argument("--title")
     p_update.add_argument("--start")
     p_update.add_argument("--end")
@@ -360,8 +485,11 @@ def main() -> None:
     p_fb.set_defaults(func=cmd_free_busy)
 
     p_delete = sub.add_parser("delete", help="予定の削除")
-    p_delete.add_argument("--event-id", dest="event_id", required=True)
+    p_delete.add_argument("--event-id", dest="event_id")
     p_delete.set_defaults(func=cmd_delete)
+
+    p_remind = sub.add_parser("remind", help="直近の予定のリマインド通知")
+    p_remind.set_defaults(func=cmd_remind)
 
     p_auth = sub.add_parser("auth", help="Google認証")
     p_auth.set_defaults(func=cmd_auth)
