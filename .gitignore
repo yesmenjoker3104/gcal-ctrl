@@ -5,3 +5,13 @@ dist/
 build/
 *.spec
 .venv/
+
+# 認証・秘密情報（誤コミット防止）
+token.json
+credentials.json
+settings.json
+.env
+.env.*
+*.pem
+*.key
+*.log

@@ -1,10 +1,14 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
+
+
+_EVENT_ID_RE = re.compile(r"[A-Za-z0-9_@.\-]+")
 
 
 _AUTH_KEYWORDS = (
@@ -37,8 +41,24 @@ def _find_gws() -> str:
     )
 
 
+def _native_gws(exe: str) -> str:
+    # npm の .cmd シムは cmd.exe を経由するため、JSON 内の & や | が実行されてしまう。同梱のネイティブ実行ファイルを直接使う
+    if not exe.lower().endswith((".cmd", ".bat")):
+        return exe
+    native = os.path.join(os.path.dirname(exe), "node_modules", "@googleworkspace", "cli", "bin", "gws.exe")
+    if os.path.exists(native):
+        return native
+    raise RuntimeError("gws.exe が見つかりません。GWS_COMMAND に gws.exe のパスを指定してください。")
+
+
+def _check_event_id(event_id: str) -> str:
+    if not _EVENT_ID_RE.fullmatch(event_id):
+        raise RuntimeError("予定のIDの形式が正しくありません。")
+    return event_id
+
+
 def _run_gws(args: list[str]) -> str:
-    exe = _find_gws()
+    exe = _native_gws(_find_gws())
     result = subprocess.run(
         [exe, *args],
         capture_output=True,
@@ -268,6 +288,7 @@ def cmd_delete(args) -> None:
     try:
         if not args.event_id:
             raise RuntimeError("削除する予定のIDが指定されていません。")
+        _check_event_id(args.event_id)
         label = _event_label(args.event_id)
         if not _confirm("予定の削除", f"「{label}」を削除しますか？"):
             _ok(message="予定の削除をキャンセルしました。")
@@ -300,6 +321,7 @@ def cmd_update(args) -> None:
             return
         if not args.event_id:
             raise RuntimeError("変更する予定のIDが指定されていません。")
+        _check_event_id(args.event_id)
         label = _event_label(args.event_id)
         changes = []
         if args.title is not None:
@@ -433,7 +455,7 @@ def cmd_remind(_args) -> None:
 
 def cmd_auth(_args) -> None:
     try:
-        exe = _find_gws()
+        exe = _native_gws(_find_gws())
         import tempfile
         gcloud_bin = os.path.expandvars(r"%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin")
         bat = tempfile.NamedTemporaryFile(suffix=".bat", delete=False, mode="w", encoding="utf-8")
